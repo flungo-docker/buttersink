@@ -1,0 +1,64 @@
+#!/bin/bash -e
+
+# Bootstraps the use of buttersink inside of a docker container.
+# Takes paths of the format [btrfs://]/dev/sdX//path/to/directory
+
+get_loc(){
+  # If argument 1 doesn't exist or is empty, then return
+  if [ -z "$1" ]; then
+    return
+  fi
+  # Strip out the btrfs prefix if it exists
+  local location="$(echo $1 | sed 's/^btrfs:\/\///')"
+  # If we are using a protocol other than btrfs then return without modifying
+  # TODO: Potential bug if `btrfs://*://` is given - rare edge case
+  if echo "$location" | grep '^.*://' > /dev/null 2>&1; then
+    # Returning $1 to mitigate making any modifications
+    echo "$1"
+    return
+  fi
+  # If there is no `//` then return as given
+  if ! echo "$location" | grep '//' > /dev/null 2>&1; then
+    # Returning $1 to mitigate making any modifications
+    echo "$1"
+    return
+  fi
+  # Split into device and path
+  # Get and validate the device part
+  local device=$(echo $location | awk -F"//" '{print $1}')
+  # If not a block device, show warning and pass unaltered
+  if [ ! -b "$device" ]; then
+    >&2 echo "'$device' is not a valid block device - skipping remap of '$1'"
+    echo $1
+    return
+  fi
+  # Mount the device if it is not already mounted.
+  local mountpoint=/mnt$device
+  mkdir -p $mountpoint
+  if ! mountpoint -q $mountpoint; then
+    mount -t btrfs "$device" "$mountpoint"
+  fi
+  # Return the path relative to the temporary directory
+  local path=$(echo $location | awk -F"//" '{print $2}')
+  echo "btrfs://$mountpoint/$path"
+}
+
+# Get the source and destination from the command
+if [ $# -ge 1 ]; then
+  DST="${@: -1:1}"
+  if [ $# -ge 2 ]; then
+    SRC="${@: -2:1}"
+  fi
+fi
+
+# Determine how many locations were given in the command
+if [ -z "$DST" ] || [[ "$DST" == "-"* ]]; then
+  # Last arg is an option, pass whatever has been written straight to buttersink
+  exec buttersink "$@"
+elif [ -z "$SRC" ] || [[ "$SRC" == "-"* ]]; then
+  # Only one location specified, parse that location
+  exec buttersink "${@: 1:$(($#-1))}" $(get_loc $DST)
+else
+  # Two locations specified, parse them both
+  exec buttersink "${@: 1:$(($#-2))}" $(get_loc $SRC) $(get_loc $DST)
+fi

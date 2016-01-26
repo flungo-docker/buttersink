@@ -1,0 +1,4 @@
+#!/bin/bash
+
+# TODO: detect which devices will be wanted and use --device instead of --privileged
+docker run --rm -v $HOME/.boto:/root/.boto --privileged flungo/buttersink "$@"
